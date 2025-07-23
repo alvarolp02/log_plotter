@@ -5,11 +5,12 @@ from rosidl_runtime_py.utilities import get_message
 import numpy as np
 import pandas as pd
 import tkinter as tk
-from tkinter import ttk, StringVar
+from tkinter import ttk, StringVar, filedialog, messagebox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 import re
+import sys
 
 
 def read_messages(input_bag: str):
@@ -43,7 +44,7 @@ def to_safe_identifier(name):
 
 def plot_variables(df):
     root = tk.Tk()
-    root.title("Topic Plotter")
+    root.title("Log Plotter")
 
     main_frame = tk.Frame(root)
     main_frame.pack(side="left", fill="y", padx=5, pady=5)
@@ -247,14 +248,31 @@ def plot_variables(df):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input", help="Path to rosbag (MCAP format)")
-    args = parser.parse_args()
+    if len(sys.argv) > 1:
+        input_path = sys.argv[1]
+    else:
+        root = tk.Tk()
+        root.withdraw()  
+
+        file_path = filedialog.askopenfilename(
+            title="Select the log file",
+            filetypes=[("MCAP files", "*.mcap"), ("txt files", "*.txt"), ("All files", "*.*")]
+        )
+
+        if not file_path:
+            messagebox.showerror("Error", "No file selected.")
+            exit()
+
+        input_path = file_path
+
+        root.destroy()  
+
+
 
     rows = []
     seen_columns = set()
 
-    for topic, msg, timestamp, msg_type in read_messages(args.input):
+    for topic, msg, timestamp, msg_type in read_messages(input_path):
         ts_sec = timestamp * 1e-9
         row = {"timestamp": ts_sec}
 
