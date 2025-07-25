@@ -11,6 +11,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 import re
 import sys
+import array
 
 
 def read_messages(input_bag: str):
@@ -280,11 +281,16 @@ def main():
             if field == "header":
                 continue
 
-            value = getattr(msg, field)
+            value = getattr(msg, field)        
             if isinstance(value, (int, float)):
                 column_name = f"{topic}.{field}"
                 row[column_name] = value
                 seen_columns.add(column_name)
+            elif isinstance(value, (array.array)) and len(value)<=20:
+                for i, val in enumerate(value):
+                    column_name = f"{topic}.{field}[{i}]"
+                    row[column_name] = val
+                    seen_columns.add(column_name)
 
         if len(row) > 1:
             rows.append(row)
