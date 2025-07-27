@@ -14,7 +14,7 @@ import sys
 import array
 
 
-def read_messages(input_bag: str):
+def read_ros_messages(input_bag: str):
     reader = rosbag2_py.SequentialReader()
     reader.open(
         rosbag2_py.StorageOptions(uri=input_bag, storage_id="mcap"),
@@ -104,7 +104,7 @@ def plot_variables(df):
         if '.' in col:
             topic, field = col.split('.', 1)
         else:
-            topic, field = "unknown", col
+            topic, field = col, ""
 
         if topic not in topic_fields:
             topic_fields[topic] = []
@@ -167,8 +167,10 @@ def plot_variables(df):
             full_col, field = fields[0]
             var = tk.BooleanVar()
             var.trace_add("write", lambda *_: on_selection_change())
-            label = f"{topic}.{field}"
-            
+            if len(field) > 0:
+                label = f"{topic}.{field}"
+            else:
+                label = topic
             check = tk.Checkbutton(topic_frame, text=label, variable=var)
             check.pack(anchor="w", padx=10)
             check_vars[full_col] = var
@@ -248,32 +250,11 @@ def plot_variables(df):
     root.mainloop()
 
 
-def main():
-    if len(sys.argv) > 1:
-        input_path = sys.argv[1]
-    else:
-        root = tk.Tk()
-        root.withdraw()  
-
-        file_path = filedialog.askopenfilename(
-            title="Select the log file",
-            filetypes=[("MCAP files", "*.mcap"), ("txt files", "*.txt"), ("All files", "*.*")]
-        )
-
-        if not file_path:
-            messagebox.showerror("Error", "No file selected.")
-            exit()
-
-        input_path = file_path
-
-        root.destroy()  
-
-
-
+def read_rosbag_mcap(file_path: str):
     rows = []
     seen_columns = set()
 
-    for topic, msg, timestamp, msg_type in read_messages(input_path):
+    for topic, msg, timestamp, msg_type in read_ros_messages(file_path):
         ts_sec = timestamp * 1e-9
         row = {"timestamp": ts_sec}
 
@@ -304,7 +285,107 @@ def main():
 
         df.sort_values("timestamp", inplace=True)
         df.ffill(inplace=True)
+    
+    return df
 
+
+def read_can_txt_file(file_path: str):
+    pattern = re.compile(
+        r"\(([\d.]+)\)\s+can\d+\s+([0-9A-Fa-f]+)\s+\[\d+\]\s+((?:[0-9A-Fa-f]{2}\s+)+)"
+    )
+
+    can_conversions = pd.read_csv("/home/alvaro/log_plotter/can_conversions.csv", index_col=0)
+
+    print(can_conversions)
+
+    rows = []
+    seen_columns = set()
+
+    with open(file_path, "r", encoding="latin1") as f:
+        for line in f:
+            match = pattern.match(line.strip())
+            if match:
+                timestamp = float(match.group(1))
+                can_id = str(hex(int(match.group(2), 16)))
+                data_str = match.group(3).strip()
+                data_bytes = [int(byte, 16) for byte in data_str.split()]
+
+                if can_id in can_conversions.index:
+                    bitIn = can_conversions["bitIn"][can_id]
+                    bitFin = can_conversions["bitFin"][can_id]
+                    value_bytes = [data_bytes[i] for i in range(bitIn, bitFin + 1) if i < len(data_bytes)]
+                    if can_conversions["Signed"][can_id] == "False":
+                        raw_int = int.from_bytes(value_bytes, byteorder="little", signed=False)
+                    else:
+                        raw_int = int.from_bytes(value_bytes, byteorder="little", signed=True)
+                    row = {"timestamp": timestamp}
+                    column_name = can_conversions["Name"][can_id] + " ("+can_id+")"
+                    row[column_name] = raw_int*can_conversions["Scale"][can_id] + can_conversions["Offset"][can_id]
+                    seen_columns.add(column_name)
+                    if len(row) > 1:
+                        rows.append(row)
+
+                for i in range(1,4):
+                    subid = can_id + str(i)
+
+                    if subid in can_conversions.index:
+                        bitIn = can_conversions["bitIn"][subid]
+                        bitFin = can_conversions["bitFin"][subid]
+                        value_bytes = [data_bytes[i] for i in range(bitIn, bitFin + 1) if i < len(data_bytes)]
+                        if can_conversions["Signed"][subid] == "False":
+                            raw_int = int.from_bytes(value_bytes, byteorder="little", signed=False)
+                        else:
+                            raw_int = int.from_bytes(value_bytes, byteorder="little", signed=True)
+                        row = {"timestamp": timestamp}
+                        column_name = can_conversions["Name"][subid] + " ("+can_id+")"
+                        row[column_name] = raw_int*can_conversions["Scale"][subid] + can_conversions["Offset"][subid]
+                        seen_columns.add(column_name)
+                        if len(row) > 1:
+                            rows.append(row)
+                    
+                
+    if rows:
+        df = pd.DataFrame(rows)
+
+        for col in seen_columns:
+            if col not in df.columns:
+                df[col] = np.nan
+
+        df.sort_values("timestamp", inplace=True)
+        df.ffill(inplace=True)
+
+
+    return df
+
+
+def main():
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+    else:
+        root = tk.Tk()
+        root.withdraw()  
+
+        file_path = filedialog.askopenfilename(
+            title="Select the log file",
+            filetypes=[("MCAP files", "*.mcap"), ("txt files", "*.txt"), ("All files", "*.*")]
+        )
+        root.destroy()  
+
+        if not file_path:
+            messagebox.showerror("Error", "No file selected.")
+            exit()
+
+    df = pd.DataFrame()
+    
+    if file_path.endswith(".txt"):
+        df = read_can_txt_file(file_path)
+        # Convertir timestamp a datetime opcionalmente
+        # df["timestamp"] = pd.to_datetime(df["timestamp"], unit='s')
+    else:
+        df = read_rosbag_mcap(file_path)  # tu función original para MCAP
+
+
+    if not df.empty:
         plot_variables(df)
     else:
         print("No numeric data extracted for plotting.")
